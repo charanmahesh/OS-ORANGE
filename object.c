@@ -253,5 +253,48 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
         free(buf);
         return -1; // Corrupted object
     }
+ uint8_t *data_start = null_ptr + 1;
+    size_t actual_data_len = file_size - (data_start - buf);
  
+    // Use parsed size as a sanity check
+    if (actual_data_len < data_size) {
+        free(buf);
+        return -1;
+    }
+ 
+    uint8_t *out = malloc(data_size);
+    if (!out) {
+        free(buf);
+        return -1;
+    }
+ 
+    memcpy(out, data_start, data_size);
+    *data_out = out;
+    *len_out = data_size;
+ 
+    free(buf);
+    return 0;
+    uint8_t *data_start = null_ptr + 1;
+    size_t actual_data_len = file_size - (data_start - buf);
+ 
+    // Use parsed size as a sanity check
+    if (actual_data_len < data_size) {
+        free(buf);
+        return -1;
+    }
+ 
+    uint8_t *out = malloc(data_size);
+    if (!out) {
+        free(buf);
+        return -1;
+    }
+ 
+    memcpy(out, data_start, data_size);
+    *data_out = out;
+    *len_out = data_size;
+ 
+    free(buf);
+    return 0;
 }
+}
+
