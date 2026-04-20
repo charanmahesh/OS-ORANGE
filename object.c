@@ -192,6 +192,66 @@ if (object_exists(id_out)) {
 // Returns 0 on success, -1 on error (file not found, corrupt, etc.).
 int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
     // TODO: Implement
-    (void)id; (void)type_out; (void)data_out; (void)len_out;
-    return -1;
+    // Step 1: Build the file path from the hash
+    char path[512];
+    object_path(id, path, sizeof(path));
+ 
+    // Step 2: Open and read the entire file
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+ 
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+ 
+    if (file_size <= 0) {
+        fclose(f);
+        return -1;
+    }
+ 
+    uint8_t *buf = malloc(file_size);
+    if (!buf) {
+        fclose(f);
+        return -1;
+    }
+ 
+    if ((long)fread(buf, 1, file_size, f) != file_size) {
+        fclose(f);
+        free(buf);
+        return -1;
+    }
+    fclose(f);
+ 
+    // Step 3: Parse the header — find the '\0' separating header from data
+    uint8_t *null_ptr = memchr(buf, '\0', file_size);
+    if (!null_ptr) {
+        free(buf);
+        return -1;
+    }
+ 
+    // Parse type string from header (before the space)
+    if (strncmp((char *)buf, "blob", 4) == 0)        *type_out = OBJ_BLOB;
+    else if (strncmp((char *)buf, "tree", 4) == 0)   *type_out = OBJ_TREE;
+    else if (strncmp((char *)buf, "commit", 6) == 0) *type_out = OBJ_COMMIT;
+    else {
+        free(buf);
+        return -1;
+    }
+ 
+    // Parse size from header (after the space)
+    char *space_ptr = memchr(buf, ' ', null_ptr - buf);
+    if (!space_ptr) {
+        free(buf);
+        return -1;
+    }
+    size_t data_size = (size_t)atol(space_ptr + 1);
+ 
+    // Step 4: Verify integrity — recompute hash and compare to expected
+    ObjectID computed;
+    compute_hash(buf, file_size, &computed);
+    if (memcmp(computed.hash, id->hash, HASH_SIZE) != 0) {
+        free(buf);
+        return -1; // Corrupted object
+    }
+ 
 }
