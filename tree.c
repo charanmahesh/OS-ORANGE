@@ -204,8 +204,22 @@ static int write_tree_level(IndexEntry *entries, int count,
 //
 // Returns 0 on success, -1 on error.
 int tree_from_index(ObjectID *id_out) {
-    // TODO: Implement recursive tree building
-    // (See Lab Appendix for logical steps)
-    (void)id_out;
-    return -1;
+    // Load the current index (staged files)
+    Index index;
+    if (index_load(&index) != 0) return -1;
+ 
+    if (index.count == 0) {
+        // Empty index — write an empty tree
+        Tree empty_tree;
+        empty_tree.count = 0;
+        void *tree_data;
+        size_t tree_len;
+        if (tree_serialize(&empty_tree, &tree_data, &tree_len) != 0) return -1;
+        int ret = object_write(OBJ_TREE, tree_data, tree_len, id_out);
+        free(tree_data);
+        return ret;
+    }
+ 
+    // Build the root tree recursively from all index entries with prefix ""
+    return write_tree_level(index.entries, index.count, "", id_out);
 }
