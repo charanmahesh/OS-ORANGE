@@ -15,6 +15,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include "index.h" 
 
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
 
@@ -122,11 +123,97 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 // objects to the object store.
 //
 // Returns 0 on success, -1 on error.
+
+static int write_tree_level(IndexEntry *entries, int count,
+                            const char *prefix, ObjectID *id_out) {
+    Tree tree;
+    tree.count = 0;
+
+    int i = 0;
+    while (i < count) {
+        IndexEntry *e = &entries[i];
+
+        // Strip the current prefix to get the relative name at this level
+        const char *rel = e->path + strlen(prefix);
+
+        char *slash = strchr(rel, '/');
+
+        if (slash != NULL) {
+            // Entry is inside a subdirectory — get the directory name
+            char dir_name[256];
+            size_t dir_len = slash - rel;
+            if (dir_len >= sizeof(dir_name)) return -1;
+            memcpy(dir_name, rel, dir_len);
+            dir_name[dir_len] = '\0';
+
+            // Build the full prefix for this subdirectory
+            char sub_prefix[512];
+            snprintf(sub_prefix, sizeof(sub_prefix), "%s%s/", prefix, dir_name);
+
+            // Count entries that belong to this subdirectory
+            int sub_count = 0;
+            for (int j = i; j < count; j++) {
+                if (strncmp(entries[j].path, sub_prefix, strlen(sub_prefix)) == 0)
+                    sub_count++;
+                else
+                    break;
+            }
+
+            // Recurse into the subdirectory
+            ObjectID sub_id;
+            if (write_tree_level(entries + i, sub_count, sub_prefix, &sub_id) != 0)
+                return -1;
+
+            // Add a DIR entry pointing to the subtree
+            TreeEntry *te = &tree.entries[tree.count++];
+            te->mode = MODE_DIR;
+            snprintf(te->name, sizeof(te->name), "%s", dir_name);
+            memcpy(te->hash.hash, sub_id.hash, HASH_SIZE);
+
+            i += sub_count;
+        } else {
+            // Plain file at this level
+            TreeEntry *te = &tree.entries[tree.count++];
+            te->mode = e->mode;
+            snprintf(te->name, sizeof(te->name), "%s", rel);
+            memcpy(te->hash.hash, e->hash.hash, HASH_SIZE);
+
+            i++;
+        }
+
+        if (tree.count >= MAX_TREE_ENTRIES) return -1;
+    }
+
+    void *tree_data;
+    size_t tree_len;
+    if (tree_serialize(&tree, &tree_data, &tree_len) != 0) return -1;
+
+    int ret = object_write(OBJ_TREE, tree_data, tree_len, id_out);
+    free(tree_data);
+    return ret;
+}
+
+
+
 int tree_from_index(ObjectID *id_out) {
     // Will be fully implemented in Phase 3 once index.c is complete.
     // test_tree only tests tree_serialize/tree_parse roundtrips,
     // so this stub is sufficient for Phase 2.
-    (void)id_out;
-    return 0;
+    Index index;
+    if (index_load(&index) != 0) return -1;
+
+    if (index.count == 0) {
+        Tree empty_tree;
+        empty_tree.count = 0;
+        void *tree_data;
+        size_t tree_len;
+        if (tree_serialize(&empty_tree, &tree_data, &tree_len) != 0) return -1;
+        int ret = object_write(OBJ_TREE, tree_data, tree_len, id_out);
+        free(tree_data);
+        return ret;
+    }
+
+    return write_tree_level(index.entries, index.count, "", id_out);
+
 }
 
