@@ -198,9 +198,60 @@ int index_load(Index *index) {
 // Returns 0 on success, -1 on error.
 int index_save(const Index *index) {
     // TODO: Implement atomic index saving
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+    // Work on a sorted copy so we don't mutate the caller's data
+    Index sorted = *index;
+    qsort(sorted.entries, sorted.count, sizeof(IndexEntry), compare_index_entries);
+
+    // Write to a temp file in the same directory as the index
+    char tmp_path[] = INDEX_FILE ".tmp_XXXXXX";
+    int fd = mkstemp(tmp_path);
+    if (fd < 0) return -1;
+
+    FILE *f = fdopen(fd, "w");
+    if (!f) {
+        close(fd);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    for (int i = 0; i < sorted.count; i++) {
+        IndexEntry *e = &sorted.entries[i];
+        char hex[HASH_HEX_SIZE + 1];
+        hash_to_hex(&e->hash, hex);
+
+        fprintf(f, "%o %s %llu %u %s\n",
+                e->mode,
+                hex,
+                (unsigned long long)e->mtime_sec,
+                e->size,
+                e->path);
+    }
+
+    // Flush userspace buffers then sync to disk
+    if (fflush(f) != 0) {
+        fclose(f);
+        unlink(tmp_path);
+        return -1;
+    }
+    if (fsync(fileno(f)) != 0) {
+        fclose(f);
+        unlink(tmp_path);
+        return -1;
+    }
+    fclose(f);
+
+    // Atomically replace the old index file
+    if (rename(tmp_path, INDEX_FILE) != 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+
+    return 0;
+}
+
+// Stage a file for the next commit.
+// Reads file contents, writes as a blob, updates the index entry.
+// Returns 0 on success, -1 on error.
 }
 
 // Stage a file for the next commit.
