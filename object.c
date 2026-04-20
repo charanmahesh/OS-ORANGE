@@ -115,6 +115,57 @@ if (object_exists(id_out)) {
     free(full_obj);
     return 0;
 }
+
+ char hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(id_out, hex);
+ 
+    char shard_dir[512];
+    snprintf(shard_dir, sizeof(shard_dir), "%s/%.2s", OBJECTS_DIR, hex);
+    mkdir(shard_dir, 0755); // OK if it already exists
+ 
+    // Step 5: Write to a temporary file in the shard directory
+    char tmp_path[512];
+    snprintf(tmp_path, sizeof(tmp_path), "%s/%.2s/tmp_XXXXXX", OBJECTS_DIR, hex);
+    int fd = mkstemp(tmp_path);
+    if (fd < 0) {
+        free(full_obj);
+        return -1;
+    }
+ 
+    ssize_t written = write(fd, full_obj, full_len);
+    free(full_obj);
+    if (written < 0 || (size_t)written != full_len) {
+        close(fd);
+        unlink(tmp_path);
+        return -1;
+    }
+ 
+    // Step 6: fsync the temp file to flush data to disk
+    if (fsync(fd) < 0) {
+        close(fd);
+        unlink(tmp_path);
+        return -1;
+    }
+    close(fd);
+ 
+    // Step 7: Atomically rename temp file to final path
+    char final_path[512];
+    object_path(id_out, final_path, sizeof(final_path));
+ 
+    if (rename(tmp_path, final_path) < 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+ 
+    // Step 8: fsync the shard directory to persist the rename
+    int dir_fd = open(shard_dir, O_RDONLY);
+    if (dir_fd >= 0) {
+        fsync(dir_fd);
+        close(dir_fd);
+    }
+ 
+    return 0;
+}
 }
 
 // Read an object from the store.
